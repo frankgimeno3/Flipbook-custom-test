@@ -65,6 +65,40 @@ export function isValidStep(step: number): boolean {
   return getViewSteps().includes(step);
 }
 
+/** Para índice >= 1 devuelve el impar inicial del spread; 0 sigue siendo 0. */
+export function spreadStartIndex(pageOrStep: number): number {
+  if (pageOrStep === 0) return 0;
+  return pageOrStep % 2 === 1 ? pageOrStep : pageOrStep - 1;
+}
+
+/** Label por spread: "0", "1_2", "3_4", … o "15" si es última sola. */
+export function getSpreadLabel(step: number): string {
+  const steps = getViewSteps();
+  if (step === 0) return "0";
+  const last = steps[steps.length - 1];
+  if (step === last && !steps.includes(step + 1)) return String(step);
+  return `${step}_${step + 1}`;
+}
+
+/** Parsea slug de URL a step navegable. "3_4"→3, par (ej. 4)→impar anterior, impar→ese. */
+export function parseSpreadParam(param: string): number | null {
+  const steps = getViewSteps();
+  if (!param || steps.length === 0) return null;
+  if (param === "0") return 0;
+  const underscore = param.indexOf("_");
+  if (underscore !== -1) {
+    const first = parseInt(param.slice(0, underscore), 10);
+    return Number.isNaN(first) || !isValidStep(first) ? null : first;
+  }
+  const n = parseInt(param, 10);
+  if (Number.isNaN(n)) return null;
+  if (n < 0) return null;
+  if (n % 2 === 0 && n > 0) return spreadStartIndex(n);
+  if (isValidStep(n)) return n;
+  if (n === steps[steps.length - 1]) return n;
+  return null;
+}
+
 /** Índice de artículos con título (para el sumario de contenidos). Una entrada por artículo (por título único). */
 export function getArticleIndex(): { page_number: number; titulo: string }[] {
   const seen = new Set<string>();

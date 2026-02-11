@@ -32,12 +32,50 @@ export interface ArticleIndexEntry {
 
 export interface FlipbookViewProps {
   currentStep: number;
+  spreadLabel: string;
+  prevSpreadLabel: string | null;
+  nextSpreadLabel: string | null;
   viewData: PageWithCompany[];
   articleIndex: ArticleIndexEntry[];
   nextStep: number | null;
   prevStep: number | null;
   currentPosition: number;
   totalSteps: number;
+}
+
+type EffectiveSide = "left" | "right";
+
+function effectiveSide(page: FlipbookPage): EffectiveSide {
+  if (page.page_type === "cover" || page.page_side === "cover") return "right";
+  if (page.page_side === "end" || page.page_type === "backCover") return "left";
+  return page.page_side === "left" ? "left" : "right";
+}
+
+/** Zonas: tercio exterior (33%) + (top 5% | bottom 5% | borde exterior 10%). Click: borde 10% o buffer 100px. */
+function hitTestZones(
+  pageRect: DOMRect,
+  clientX: number,
+  clientY: number,
+  side: EffectiveSide
+): { pointer: boolean; click: boolean } {
+  const { left, top, width, height } = pageRect;
+  const x = clientX - left;
+  const y = clientY - top;
+  const third = width / 3;
+  const top5 = height * 0.05;
+  const bottom5 = height - height * 0.05;
+  const edge10 = width * 0.1;
+  const inOuterThird =
+    side === "left" ? x < third : x > width - third;
+  const inTopBottom = y < top5 || y > bottom5;
+  const inOuterEdge = side === "left" ? x < edge10 : x > width - edge10;
+  const pointer = inOuterThird && (inTopBottom || inOuterEdge);
+  const inBuffer100 =
+    side === "left"
+      ? clientX >= pageRect.left - 100 && clientX < pageRect.left
+      : clientX > pageRect.right && clientX <= pageRect.right + 100;
+  const click = inOuterEdge || inBuffer100;
+  return { pointer, click };
 }
 
 function getTypeLabel(page: FlipbookPage): string {
@@ -294,7 +332,13 @@ function clampPan(
   };
 }
 
+const EDGE_PERCENT = 10;
+const BUFFER_PX = 100;
+
 export default function FlipbookView({
+  spreadLabel,
+  prevSpreadLabel,
+  nextSpreadLabel,
   viewData,
   articleIndex,
   nextStep,
@@ -305,9 +349,11 @@ export default function FlipbookView({
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
+  const [pointerCursor, setPointerCursor] = useState(false);
   const router = useRouter();
   const viewportRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const pageRefs = useRef<(HTMLDivElement | null)[]>([]);
   const dragStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
   const zoomRef = useRef(zoom);
   const zoomAnimationRef = useRef<number | null>(null);
@@ -388,28 +434,47 @@ export default function FlipbookView({
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
-      if (!isDragging) return;
-      const vp = viewportRef.current;
-      const content = contentRef.current;
-      if (!vp || !content) return;
-      const dx = e.clientX - dragStartRef.current.x;
-      const dy = e.clientY - dragStartRef.current.y;
-      const newPan = {
-        x: dragStartRef.current.panX + dx,
-        y: dragStartRef.current.panY + dy,
-      };
-      const vpRect = vp.getBoundingClientRect();
-      const clamped = clampPan(
-        newPan,
-        vpRect.width,
-        vpRect.height,
-        content.offsetWidth,
-        content.offsetHeight,
-        zoom
-      );
-      setPan(clamped);
+      if (isDragging) {
+        const vp = viewportRef.current;
+        const content = contentRef.current;
+        if (!vp || !content) return;
+        const dx = e.clientX - dragStartRef.current.x;
+        const dy = e.clientY - dragStartRef.current.y;
+        const newPan = {
+          x: dragStartRef.current.panX + dx,
+          y: dragStartRef.current.panY + dy,
+        };
+        const vpRect = vp.getBoundingClientRect();
+        const clamped = clampPan(
+          newPan,
+          vpRect.width,
+          vpRect.height,
+          content.offsetWidth,
+          content.offsetHeight,
+          zoom
+        );
+        setPan(clamped);
+        return;
+      }
+      if (zoom <= 1) {
+        let inPointer = false;
+        for (let i = 0; i < viewData.length; i++) {
+          const el = pageRefs.current[i];
+          if (!el) continue;
+          const rect = el.getBoundingClientRect();
+          const side = effectiveSide(viewData[i].page);
+          const { pointer } = hitTestZones(rect, e.clientX, e.clientY, side);
+          if (pointer) {
+            inPointer = true;
+            break;
+          }
+        }
+        setPointerCursor(inPointer);
+      } else {
+        setPointerCursor(false);
+      }
     },
-    [zoom, isDragging]
+    [zoom, isDragging, viewData]
   );
 
   const handleMouseUp = useCallback(() => {
@@ -418,6 +483,7 @@ export default function FlipbookView({
 
   const handleMouseLeave = useCallback(() => {
     setIsDragging(false);
+    setPointerCursor(false);
   }, []);
 
   const zoomIn = useCallback(() => {
@@ -441,17 +507,17 @@ export default function FlipbookView({
         animateZoom(1, () => setPan({ x: 0, y: 0 }));
         return;
       }
-      if (e.key === "ArrowLeft" && prevStep !== null) {
-        router.push(`/flipbook/${prevStep}`);
+      if (e.key === "ArrowLeft" && prevSpreadLabel) {
+        router.push(`/flipbook/${prevSpreadLabel}`);
         return;
       }
-      if (e.key === "ArrowRight" && nextStep !== null) {
-        router.push(`/flipbook/${nextStep}`);
+      if (e.key === "ArrowRight" && nextSpreadLabel) {
+        router.push(`/flipbook/${nextSpreadLabel}`);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [animateZoom, prevStep, nextStep, router]);
+  }, [animateZoom, prevSpreadLabel, nextSpreadLabel, router]);
 
   return (
     <div className="flipbook-layout flex min-h-screen flex-col">
@@ -464,7 +530,11 @@ export default function FlipbookView({
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseLeave}
         style={{
-          cursor: zoom > 1 ? (isDragging ? "grabbing" : "grab") : "default",
+          cursor: zoom > 1
+            ? (isDragging ? "grabbing" : "grab")
+            : pointerCursor
+              ? "pointer"
+              : "default",
         }}
       >
         <div
@@ -478,13 +548,55 @@ export default function FlipbookView({
             ref={contentRef}
             className="flex flex-wrap items-stretch justify-center gap-4"
           >
-            {viewData.map((data) => (
-              <PageCard
-                key={data.page.page_id}
-                data={data}
-                articleIndex={articleIndex}
-              />
-            ))}
+            {viewData.map((data, i) => {
+              const side = effectiveSide(data.page);
+              return (
+                <div
+                  key={data.page.page_id}
+                  ref={(el) => {
+                    pageRefs.current[i] = el;
+                  }}
+                  className="relative"
+                >
+                  <PageCard data={data} articleIndex={articleIndex} />
+                  {/* Un solo overlay por lado: edge 10% + buffer 100px → una sola navegación por click */}
+                  {side === "left" && prevSpreadLabel && (
+                    <div
+                      className="absolute top-0 h-full cursor-pointer"
+                      style={{
+                        left: -BUFFER_PX,
+                        width: `calc(${EDGE_PERCENT}% + ${BUFFER_PX}px)`,
+                        pointerEvents: "auto",
+                        zIndex: 10,
+                      }}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        router.push(`/flipbook/${prevSpreadLabel}`);
+                      }}
+                      aria-label="Página anterior"
+                    />
+                  )}
+                  {side === "right" && nextSpreadLabel && (
+                    <div
+                      className="absolute top-0 h-full cursor-pointer"
+                      style={{
+                        left: `calc(100% - ${EDGE_PERCENT}%)`,
+                        width: `calc(${EDGE_PERCENT}% + ${BUFFER_PX}px)`,
+                        pointerEvents: "auto",
+                        zIndex: 10,
+                      }}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        router.push(`/flipbook/${nextSpreadLabel}`);
+                      }}
+                      aria-label="Página siguiente"
+                    />
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -493,9 +605,9 @@ export default function FlipbookView({
         className="flex flex-wrap items-center justify-center gap-4 border-t border-stone-300 bg-stone-100/80 px-6 py-4 backdrop-blur-sm sm:gap-6"
         aria-label="Navegación del flipbook"
       >
-        {prevStep !== null ? (
+        {prevSpreadLabel ? (
           <Link
-            href={`/flipbook/${prevStep}`}
+            href={`/flipbook/${prevSpreadLabel}`}
             className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-amber-600 text-white shadow transition hover:bg-amber-700"
             aria-label="Página anterior"
           >
@@ -533,12 +645,12 @@ export default function FlipbookView({
         )}
 
         <span className="min-w-[100px] shrink-0 text-center text-sm font-medium text-stone-600">
-          {currentPosition} / {totalSteps}
+          {spreadLabel} / {totalSteps}
         </span>
 
-        {nextStep !== null ? (
+        {nextSpreadLabel ? (
           <Link
-            href={`/flipbook/${nextStep}`}
+            href={`/flipbook/${nextSpreadLabel}`}
             className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-amber-600 text-white shadow transition hover:bg-amber-700"
             aria-label="Página siguiente"
           >

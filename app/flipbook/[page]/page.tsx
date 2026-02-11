@@ -1,13 +1,14 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import {
   getViewSteps,
   getPageNumbersForStep,
   getNextStep,
   getPrevStep,
-  isValidStep,
   getPageByNumber,
   getCompanyById,
   getArticleIndex,
+  parseSpreadParam,
+  getSpreadLabel,
 } from "../../lib/flipbook-data";
 import { getLoremParagraphs } from "../../lib/lorem";
 import FlipbookView, {
@@ -28,15 +29,21 @@ interface Props {
 
 export default async function FlipbookPage({ params }: Props) {
   const { page: pageParam } = await params;
-  const step = parseInt(pageParam, 10);
-  if (Number.isNaN(step) || !isValidStep(step)) {
+  const step = parseSpreadParam(pageParam);
+  if (step === null) {
     notFound();
+  }
+  const spreadLabel = getSpreadLabel(step);
+  if (pageParam !== spreadLabel) {
+    redirect(`/flipbook/${spreadLabel}`);
   }
   const pageNumbers = getPageNumbersForStep(step);
   const nextStep = getNextStep(step);
   const prevStep = getPrevStep(step);
   const steps = getViewSteps();
   const articleIndex: ArticleIndexEntry[] = getArticleIndex();
+  const prevSpreadLabel = prevStep !== null ? getSpreadLabel(prevStep) : null;
+  const nextSpreadLabel = nextStep !== null ? getSpreadLabel(nextStep) : null;
 
   const viewData: PageWithCompany[] = pageNumbers
     .map((num) => {
@@ -53,6 +60,9 @@ export default async function FlipbookPage({ params }: Props) {
 
   const flipbookProps: FlipbookViewProps = {
     currentStep: step,
+    spreadLabel,
+    prevSpreadLabel,
+    nextSpreadLabel,
     viewData,
     articleIndex,
     nextStep,
