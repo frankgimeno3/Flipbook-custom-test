@@ -1,0 +1,116 @@
+[
+  {
+    "page_id": "page_m25121_p0",
+    "page_number": 0,
+    "page_type": "cover",
+    "page_side": "cover"
+  },
+  {
+    "page_id": "page_m25121_p1",
+    "page_number": 1,
+    "page_type": "advert",
+    "page_side": "left",
+    "relatedTo": "comp_001"
+  },
+  {
+    "page_id": "page_m25121_p2",
+    "page_number": 2,
+    "page_type": "advert",
+    "page_side": "right",
+    "relatedTo": "comp_002"
+  },
+  {
+    "page_id": "page_m25121_p3",
+    "page_number": 3,
+    "page_type": "Summary",
+    "page_side": "left"
+  },
+  {
+    "page_id": "page_m25121_p4",
+    "page_number": 4,
+    "page_type": "Summary",
+    "page_side": "right"
+  },
+  {
+    "page_id": "page_m25121_p5",
+    "page_number": 5,
+    "page_type": "article",
+    "page_side": "left",
+    "titulo": "Tendencias en fachadas de vidrio para 2025",
+    "subtitulo": "Materiales, eficiencia energética y diseño"
+  },
+  {
+    "page_id": "page_m25121_p6",
+    "page_number": 6,
+    "page_type": "article",
+    "page_side": "right",
+    "titulo": "Tendencias en fachadas de vidrio para 2025",
+    "subtitulo": "Materiales, eficiencia energética y diseño"
+  },
+  {
+    "page_id": "page_m25121_p7",
+    "page_number": 7,
+    "page_type": "article",
+    "page_side": "left",
+    "titulo": "Aislamiento acústico en ventanas de doble acristalamiento",
+    "subtitulo": "Guía técnica y normativa europea"
+  },
+  {
+    "page_id": "page_m25121_p8",
+    "page_number": 8,
+    "page_type": "article",
+    "page_side": "right",
+    "titulo": "Aislamiento acústico en ventanas de doble acristalamiento",
+    "subtitulo": "Guía técnica y normativa europea"
+  },
+  {
+    "page_id": "page_m25121_p9",
+    "page_number": 9,
+    "page_type": "advertiserIndex",
+    "page_side": "left"
+  },
+  {
+    "page_id": "page_m25121_p10",
+    "page_number": 10,
+    "page_type": "advertiserIndex",
+    "page_side": "right"
+  },
+  {
+    "page_id": "page_m25121_p11",
+    "page_number": 11,
+    "page_type": "article",
+    "page_side": "left",
+    "titulo": "Vidrio laminado de seguridad: aplicaciones en edificios",
+    "subtitulo": "Resistencia, certificaciones y casos de uso"
+  },
+  {
+    "page_id": "page_m25121_p12",
+    "page_number": 12,
+    "page_type": "article",
+    "page_side": "right",
+    "titulo": "Vidrio laminado de seguridad: aplicaciones en edificios",
+    "subtitulo": "Resistencia, certificaciones y casos de uso"
+  },
+  {
+    "page_id": "page_m25121_p13",
+    "page_number": 13,
+    "page_type": "article",
+    "page_side": "left",
+    "titulo": "Sostenibilidad en la industria del vidrio",
+    "subtitulo": "Reciclado y huella de carbono"
+  },
+  {
+    "page_id": "page_m25121_p14",
+    "page_number": 14,
+    "page_type": "article",
+    "page_side": "right",
+    "titulo": "Sostenibilidad en la industria del vidrio",
+    "subtitulo": "Reciclado y huella de carbono"
+  },
+  {
+    "page_id": "page_m25121_p15",
+    "page_number": 15,
+    "page_type": "backCover",
+    "page_side": "end"
+  }
+]

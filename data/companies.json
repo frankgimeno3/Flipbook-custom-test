@@ -1,0 +1,44 @@
+[
+  {
+    "company_id": "comp_001",
+    "company_name": "Vidrios del Sur S.L.",
+    "company_email": "info@vidriosdelsur.es",
+    "company_phone": "+34 952 123 456",
+    "company_web": "https://www.vidriosdelsur.es"
+  },
+  {
+    "company_id": "comp_002",
+    "company_name": "Cristalería Norte",
+    "company_email": "contacto@cristalerianorte.com",
+    "company_phone": "+34 913 456 789",
+    "company_web": "https://www.cristalerianorte.com"
+  },
+  {
+    "company_id": "comp_003",
+    "company_name": "Glass Solutions International",
+    "company_email": "sales@glasssolutions.com",
+    "company_phone": "+34 934 789 012",
+    "company_web": "https://www.glasssolutions.com"
+  },
+  {
+    "company_id": "comp_004",
+    "company_name": "Fachadas de Cristal",
+    "company_email": "proyectos@fachadasdecristal.es",
+    "company_phone": "+34 965 234 567",
+    "company_web": "https://www.fachadasdecristal.es"
+  },
+  {
+    "company_id": "comp_005",
+    "company_name": "Ventanas Premium",
+    "company_email": "info@ventanaspremium.com",
+    "company_phone": "+34 918 567 890",
+    "company_web": "https://www.ventanaspremium.com"
+  },
+  {
+    "company_id": "comp_006",
+    "company_name": "Aislamientos Glass",
+    "company_email": "tecnicos@aislamientosglass.es",
+    "company_phone": "+34 944 678 901",
+    "company_web": "https://www.aislamientosglass.es"
+  }
+]
