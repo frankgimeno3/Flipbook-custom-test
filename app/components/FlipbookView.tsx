@@ -1,16 +1,21 @@
 "use client";
 
 import { useRef, useState, useCallback, useEffect } from "react";
-import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import type { FlipbookPage, Company } from "../types/flipbook";
 import { getUnsplashImageUrl } from "../lib/unsplash";
+import {
+  getCachedSpread,
+  setCachedSpread,
+  type SpreadPayload,
+} from "../lib/spread-cache";
 
 const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 2;
 const ZOOM_STEP = 0.1;
 const ZOOM_ANIMATION_DURATION_MS = 1200;
+const TURN_DURATION_MS = 1400;
 
 function easeInOutCubic(t: number): number {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
@@ -49,6 +54,19 @@ function effectiveSide(page: FlipbookPage): EffectiveSide {
   if (page.page_type === "cover" || page.page_side === "cover") return "right";
   if (page.page_side === "end" || page.page_type === "backCover") return "left";
   return page.page_side === "left" ? "left" : "right";
+}
+
+/** Reparte viewData en left/right según effectiveSide. */
+function splitSpread(
+  data: PageWithCompany[]
+): { left?: PageWithCompany; right?: PageWithCompany } {
+  const out: { left?: PageWithCompany; right?: PageWithCompany } = {};
+  for (const item of data) {
+    const side = effectiveSide(item.page);
+    if (side === "left") out.left = item;
+    else out.right = item;
+  }
+  return out;
 }
 
 /** Zonas: tercio exterior (33%) + (top 5% | bottom 5% | borde exterior 10%). Click: borde 10% o buffer 100px. */
@@ -116,9 +134,11 @@ function MagazineLogo() {
 function PageCard({
   data,
   articleIndex,
+  disableBackdropDuringTurn = false,
 }: {
   data: PageWithCompany;
   articleIndex: ArticleIndexEntry[];
+  disableBackdropDuringTurn?: boolean;
 }) {
   const { page, company, loremParagraphs } = data;
   const imageUrl = getUnsplashImageUrl(page.page_id);
@@ -276,10 +296,10 @@ function PageCard({
         )}
       </div>
 
-      {/* Topo: empresa, abajo a la derecha */}
+      {/* Topo: empresa, abajo a la derecha (sin backdrop-blur durante giro para evitar mezcla) */}
       {company && (
         <div
-          className={`absolute bottom-4 right-4 z-10 max-w-[220px] rounded-lg p-3 shadow-xl backdrop-blur-sm ${hasBgImage ? "border border-amber-400/60 bg-stone-900/90" : "border border-stone-300 bg-white/95"}`}
+          className={`absolute bottom-4 right-4 z-10 max-w-[220px] rounded-lg p-3 shadow-xl ${disableBackdropDuringTurn ? (hasBgImage ? "border border-amber-400/60 bg-stone-900" : "border border-stone-300 bg-white") : `backdrop-blur-sm ${hasBgImage ? "border border-amber-400/60 bg-stone-900/90" : "border border-stone-300 bg-white/95"}`}`}
         >
           <div className={`mb-0.5 text-[10px] font-medium uppercase tracking-wider ${hasBgImage ? "text-amber-300" : "text-amber-600"}`}>
             Anunciante
@@ -332,6 +352,245 @@ function clampPan(
   };
 }
 
+/** Escena de giro: underlay z0, estático z10, hoja z50. Una sola cara opaca; swap en t=0.5 + scaleX(-1). Micro shrink al final. */
+function TurnScene({
+  fromSpread,
+  toSpread,
+  turnDir,
+  turnProgress,
+  articleIndex,
+  stageSize,
+  turningCardSize,
+  turnGapPx,
+}: {
+  fromSpread: PageWithCompany[];
+  toSpread: PageWithCompany[];
+  turnDir: "prev" | "next";
+  turnProgress: number;
+  articleIndex: ArticleIndexEntry[];
+  stageSize: { w: number; h: number };
+  turningCardSize?: { w: number; h: number } | null;
+  turnGapPx?: number;
+}) {
+  const fromLR = splitSpread(fromSpread);
+  const toLR = splitSpread(toSpread);
+  const gap = turnGapPx ?? 0;
+
+  const firstHalf = turnProgress < 0.5;
+  const t1 = firstHalf ? turnProgress / 0.5 : (turnProgress - 0.5) / 0.5;
+  const angle =
+    turnDir === "next"
+      ? firstHalf
+        ? -90 * t1
+        : -90 - 90 * t1
+      : firstHalf
+        ? 90 * t1
+        : 90 + 90 * t1;
+  const zTweak = 1.5 * Math.sin(Math.PI * turnProgress) * (turnDir === "next" ? 1 : -1);
+  const f = easeInOutCubic(turnProgress);
+  const tx = (turnDir === "next" ? -1 : 1) * gap * f;
+
+  const END_SHRINK_START = 0.85;
+  const END_SCALE = 0.985;
+  const endT = Math.max(0, Math.min(1, (turnProgress - END_SHRINK_START) / (1 - END_SHRINK_START)));
+  const shrink = 1 - (1 - END_SCALE) * easeInOutCubic(endT);
+
+  const slotClass = "flex shrink-0 items-stretch justify-center";
+  const cardStyle: Record<string, string | number> = {
+    aspectRatio: `${PAGE_ASPECT_RATIO}`,
+    width: "min(35vw, 739px)",
+    minWidth: "min(90vw, 216px)",
+  };
+
+  const layoutClass = "absolute inset-0 flex flex-wrap items-stretch justify-center gap-4";
+  const sheetSlotStyle = {
+    ...cardStyle,
+    ...(turningCardSize ? { width: turningCardSize.w, height: turningCardSize.h } : {}),
+  };
+  const sheetTransformOrigin = turnDir === "next" ? "0% 50%" : "100% 50%";
+  const sheetTransform =
+    `translateX(${tx}px) translateZ(60px) rotateY(${angle}deg) rotateZ(${zTweak}deg) scale(${shrink})`;
+
+  const showFrom = firstHalf;
+  const fromPage = turnDir === "next" ? fromLR.right : fromLR.left;
+  const toPage = turnDir === "next" ? toLR.left : toLR.right;
+  const flipContent = !firstHalf;
+
+  return (
+    <div
+      className="relative w-full h-full"
+      style={{
+        width: stageSize.w,
+        height: stageSize.h,
+        position: "relative",
+        isolation: "isolate",
+        transform: "translateZ(0)",
+        willChange: "transform",
+      }}
+    >
+      {/* Underlay: spread destino — z0, sin transform 3D */}
+      <div className={layoutClass} style={{ position: "absolute", inset: 0, zIndex: 0 }}>
+        {toLR.left && (
+          <div className={slotClass} style={cardStyle}>
+            <PageCard data={toLR.left} articleIndex={articleIndex} disableBackdropDuringTurn />
+          </div>
+        )}
+        {toLR.right && (
+          <div className={slotClass} style={cardStyle}>
+            <PageCard data={toLR.right} articleIndex={articleIndex} disableBackdropDuringTurn />
+          </div>
+        )}
+      </div>
+
+      {/* Sombra proyectada sobre underlay (solo overlay, opacity en gradient) */}
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          position: "absolute",
+          inset: 0,
+          zIndex: 1,
+          background: `linear-gradient(${turnDir === "next" ? "to left" : "to right"}, transparent 60%, rgba(0,0,0,${0.15 * Math.sin(Math.PI * turnProgress)}) 100%)`,
+        }}
+      />
+
+      {/* Lado estático (from) — z10 */}
+      <div
+        className={layoutClass}
+        style={{ position: "absolute", inset: 0, zIndex: 10, perspective: "2400px" }}
+      >
+        {turnDir === "next" ? (
+          <>
+            {fromLR.left ? (
+              <div className={slotClass} style={cardStyle}>
+                <PageCard data={fromLR.left} articleIndex={articleIndex} disableBackdropDuringTurn />
+              </div>
+            ) : (
+              <div className={slotClass} style={cardStyle} aria-hidden />
+            )}
+            <div className={slotClass} style={cardStyle} aria-hidden />
+          </>
+        ) : (
+          <>
+            <div className={slotClass} style={cardStyle} aria-hidden />
+            {fromLR.right ? (
+              <div className={slotClass} style={cardStyle}>
+                <PageCard data={fromLR.right} articleIndex={articleIndex} disableBackdropDuringTurn />
+              </div>
+            ) : (
+              <div className={slotClass} style={cardStyle} aria-hidden />
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Hoja que gira — z50, una sola cara opaca; sin opacity/mix-blend/bg en contenedor; swap contenido en 0.5 */}
+      <div
+        className={layoutClass}
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          zIndex: 50,
+          pointerEvents: "none",
+          perspective: "2400px",
+        }}
+      >
+        {turnDir === "next" ? (
+          <>
+            <div className={slotClass} style={cardStyle} aria-hidden />
+            {fromLR.right && (
+              <div
+                className={slotClass}
+                style={{
+                  ...sheetSlotStyle,
+                  overflow: "hidden",
+                  transformStyle: "preserve-3d",
+                  transformOrigin: sheetTransformOrigin,
+                  transform: sheetTransform,
+                  willChange: "transform",
+                }}
+              >
+                <div className="relative w-full h-full" style={{ height: "100%" }}>
+                  <div className="absolute inset-0" style={{ zIndex: 1 }}>
+                    <div
+                      style={{
+                        width: "100%",
+                        height: "100%",
+                        transform: flipContent ? "scaleX(-1)" : undefined,
+                      }}
+                    >
+                      {showFrom && fromPage ? (
+                        <PageCard data={fromPage} articleIndex={articleIndex} disableBackdropDuringTurn />
+                      ) : toPage ? (
+                        <PageCard data={toPage} articleIndex={articleIndex} disableBackdropDuringTurn />
+                      ) : (
+                        <div className="h-full w-full rounded-lg bg-stone-200" />
+                      )}
+                    </div>
+                  </div>
+                  <div
+                    className="absolute inset-0 pointer-events-none rounded-lg"
+                    style={{
+                      zIndex: 5,
+                      background: `linear-gradient(to right, rgba(0,0,0,${0.25 * turnProgress}) 0%, transparent 30%)`,
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            {fromLR.left && (
+              <div
+                className={slotClass}
+                style={{
+                  ...sheetSlotStyle,
+                  overflow: "hidden",
+                  transformStyle: "preserve-3d",
+                  transformOrigin: sheetTransformOrigin,
+                  transform: sheetTransform,
+                  willChange: "transform",
+                }}
+              >
+                <div className="relative w-full h-full" style={{ height: "100%" }}>
+                  <div className="absolute inset-0" style={{ zIndex: 1 }}>
+                    <div
+                      style={{
+                        width: "100%",
+                        height: "100%",
+                        transform: flipContent ? "scaleX(-1)" : undefined,
+                      }}
+                    >
+                      {showFrom && fromPage ? (
+                        <PageCard data={fromPage} articleIndex={articleIndex} disableBackdropDuringTurn />
+                      ) : toPage ? (
+                        <PageCard data={toPage} articleIndex={articleIndex} disableBackdropDuringTurn />
+                      ) : (
+                        <div className="h-full w-full rounded-lg bg-stone-200" />
+                      )}
+                    </div>
+                  </div>
+                  <div
+                    className="absolute inset-0 pointer-events-none rounded-lg"
+                    style={{
+                      zIndex: 5,
+                      background: `linear-gradient(to left, rgba(0,0,0,${0.25 * turnProgress}) 0%, transparent 30%)`,
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+            <div className={slotClass} style={cardStyle} aria-hidden />
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 const EDGE_PERCENT = 10;
 const BUFFER_PX = 100;
 
@@ -350,6 +609,16 @@ export default function FlipbookView({
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [pointerCursor, setPointerCursor] = useState(false);
+  const [isTurning, setIsTurning] = useState(false);
+  const [turnDir, setTurnDir] = useState<"prev" | "next" | null>(null);
+  const [fromSpread, setFromSpread] = useState<PageWithCompany[] | null>(null);
+  const [toSpread, setToSpread] = useState<PageWithCompany[] | null>(null);
+  const [turnProgress, setTurnProgress] = useState(0);
+  const [pendingHref, setPendingHref] = useState<string | null>(null);
+  const [stageSize, setStageSize] = useState<{ w: number; h: number } | null>(null);
+  const [turningCardSize, setTurningCardSize] = useState<{ w: number; h: number } | null>(null);
+  const [turnGapPx, setTurnGapPx] = useState(0);
+  const gapRef = useRef(0);
   const router = useRouter();
   const viewportRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -357,8 +626,24 @@ export default function FlipbookView({
   const dragStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
   const zoomRef = useRef(zoom);
   const zoomAnimationRef = useRef<number | null>(null);
+  const turnAnimationRef = useRef<number | null>(null);
 
   zoomRef.current = zoom;
+
+  useEffect(() => {
+    if (pendingHref && spreadLabel === pendingHref) {
+      setIsTurning(false);
+      setTurnDir(null);
+      setFromSpread(null);
+      setToSpread(null);
+      setTurnProgress(0);
+      setPendingHref(null);
+      setStageSize(null);
+      setTurningCardSize(null);
+      setTurnGapPx(0);
+      gapRef.current = 0;
+    }
+  }, [pendingHref, spreadLabel]);
 
   const applyPanClamp = useCallback(() => {
     const vp = viewportRef.current;
@@ -500,6 +785,117 @@ export default function FlipbookView({
     });
   }, [animateZoom]);
 
+  const requestNavigate = useCallback(
+    (direction: "prev" | "next") => {
+      if (isTurning) return;
+      if (zoomRef.current > 1) return;
+      const targetLabel =
+        direction === "prev" ? prevSpreadLabel : nextSpreadLabel;
+      if (!targetLabel) return;
+
+      const reducedMotion =
+        typeof window !== "undefined" &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (reducedMotion) {
+        router.push(`/flipbook/${targetLabel}`);
+        return;
+      }
+
+      const content = contentRef.current;
+      const turningCardIndex = direction === "next" ? 1 : 0;
+      const turningEl = pageRefs.current[turningCardIndex];
+      if (content) {
+        setStageSize({
+          w: content.offsetWidth,
+          h: content.offsetHeight,
+        });
+      }
+      if (turningEl) {
+        const rect = turningEl.getBoundingClientRect();
+        setTurningCardSize({ w: rect.width, h: rect.height });
+      } else {
+        setTurningCardSize(null);
+      }
+      const elL = pageRefs.current[0];
+      const elR = pageRefs.current[1];
+      let gapPx = 0;
+      if (elL && elR) {
+        const rectL = elL.getBoundingClientRect();
+        const rectR = elR.getBoundingClientRect();
+        gapPx = rectR.left - rectL.right;
+      }
+      gapPx = Math.max(0, gapPx);
+      gapRef.current = gapPx;
+      setTurnGapPx(gapPx);
+      setFromSpread([...viewData]);
+      setIsTurning(true);
+      setTurnDir(direction);
+      setTurnProgress(0);
+
+      const loadAndAnimate = (payload: SpreadPayload) => {
+        setToSpread(payload.viewData);
+        const startTime = performance.now();
+
+        const tick = () => {
+          const elapsed = performance.now() - startTime;
+          const t = Math.min(1, elapsed / TURN_DURATION_MS);
+          const eased = easeInOutCubic(t);
+          setTurnProgress(eased);
+          if (t < 1) {
+            turnAnimationRef.current = requestAnimationFrame(tick);
+          } else {
+            turnAnimationRef.current = null;
+            router.push(`/flipbook/${targetLabel}`);
+            setPendingHref(targetLabel);
+          }
+        };
+        turnAnimationRef.current = requestAnimationFrame(tick);
+      };
+
+      const cached = getCachedSpread(targetLabel);
+      if (cached) {
+        loadAndAnimate(cached);
+        return;
+      }
+      fetch(`/api/flipbook/spread/${encodeURIComponent(targetLabel)}`)
+        .then((res) => {
+          if (!res.ok) throw new Error("Spread fetch failed");
+          return res.json() as Promise<SpreadPayload>;
+        })
+        .then((payload) => {
+          setCachedSpread(targetLabel, payload);
+          loadAndAnimate(payload);
+        })
+        .catch(() => {
+          setIsTurning(false);
+          setTurnDir(null);
+          setFromSpread(null);
+          setToSpread(null);
+          setTurnProgress(0);
+          setStageSize(null);
+          setTurningCardSize(null);
+          setTurnGapPx(0);
+          gapRef.current = 0;
+          router.push(`/flipbook/${targetLabel}`);
+        });
+    },
+    [
+      isTurning,
+      prevSpreadLabel,
+      nextSpreadLabel,
+      viewData,
+      router,
+    ]
+  );
+
+  useEffect(() => {
+    return () => {
+      if (turnAnimationRef.current !== null) {
+        cancelAnimationFrame(turnAnimationRef.current);
+      }
+    };
+  }, []);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -508,16 +904,16 @@ export default function FlipbookView({
         return;
       }
       if (e.key === "ArrowLeft" && prevSpreadLabel) {
-        router.push(`/flipbook/${prevSpreadLabel}`);
+        requestNavigate("prev");
         return;
       }
       if (e.key === "ArrowRight" && nextSpreadLabel) {
-        router.push(`/flipbook/${nextSpreadLabel}`);
+        requestNavigate("next");
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [animateZoom, prevSpreadLabel, nextSpreadLabel, router]);
+  }, [animateZoom, prevSpreadLabel, nextSpreadLabel, requestNavigate]);
 
   return (
     <div className="flipbook-layout flex min-h-screen flex-col">
@@ -535,18 +931,42 @@ export default function FlipbookView({
             : pointerCursor
               ? "pointer"
               : "default",
+          pointerEvents: isTurning ? "none" : undefined,
         }}
       >
         <div
-          className="inline-block"
+          className="relative inline-block"
           style={{
             transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
             transformOrigin: "0 0",
+            ...(isTurning ? { isolation: "isolate" } : {}),
           }}
         >
+          {isTurning && fromSpread && toSpread && turnDir && stageSize && (
+            <div
+              className="absolute left-0 top-0 flex items-center justify-center"
+              style={{ width: stageSize.w, height: stageSize.h }}
+            >
+              <TurnScene
+                fromSpread={fromSpread}
+                toSpread={toSpread}
+                turnDir={turnDir}
+                turnProgress={turnProgress}
+                articleIndex={articleIndex}
+                stageSize={stageSize}
+                turningCardSize={turningCardSize}
+                turnGapPx={turnGapPx}
+              />
+            </div>
+          )}
           <div
             ref={contentRef}
             className="flex flex-wrap items-stretch justify-center gap-4"
+            style={
+              isTurning && fromSpread && toSpread && turnDir
+                ? { visibility: "hidden", pointerEvents: "none" }
+                : undefined
+            }
           >
             {viewData.map((data, i) => {
               const side = effectiveSide(data.page);
@@ -572,7 +992,7 @@ export default function FlipbookView({
                       onClick={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
-                        router.push(`/flipbook/${prevSpreadLabel}`);
+                        requestNavigate("prev");
                       }}
                       aria-label="Página anterior"
                     />
@@ -589,7 +1009,7 @@ export default function FlipbookView({
                       onClick={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
-                        router.push(`/flipbook/${nextSpreadLabel}`);
+                        requestNavigate("next");
                       }}
                       aria-label="Página siguiente"
                     />
@@ -606,9 +1026,11 @@ export default function FlipbookView({
         aria-label="Navegación del flipbook"
       >
         {prevSpreadLabel ? (
-          <Link
-            href={`/flipbook/${prevSpreadLabel}`}
-            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-amber-600 text-white shadow transition hover:bg-amber-700"
+          <button
+            type="button"
+            onClick={() => requestNavigate("prev")}
+            disabled={isTurning}
+            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-amber-600 text-white shadow transition hover:bg-amber-700 disabled:opacity-60"
             aria-label="Página anterior"
           >
             <svg
@@ -624,7 +1046,7 @@ export default function FlipbookView({
             >
               <path d="M15 18l-6-6 6-6" />
             </svg>
-          </Link>
+          </button>
         ) : (
           <span
             className="flex h-12 w-12 shrink-0 cursor-not-allowed items-center justify-center rounded-full bg-stone-300 text-stone-500"
@@ -649,9 +1071,11 @@ export default function FlipbookView({
         </span>
 
         {nextSpreadLabel ? (
-          <Link
-            href={`/flipbook/${nextSpreadLabel}`}
-            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-amber-600 text-white shadow transition hover:bg-amber-700"
+          <button
+            type="button"
+            onClick={() => requestNavigate("next")}
+            disabled={isTurning}
+            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-amber-600 text-white shadow transition hover:bg-amber-700 disabled:opacity-60"
             aria-label="Página siguiente"
           >
             <svg
@@ -667,7 +1091,7 @@ export default function FlipbookView({
             >
               <path d="M9 18l6-6-6-6" />
             </svg>
-          </Link>
+          </button>
         ) : (
           <span
             className="flex h-12 w-12 shrink-0 cursor-not-allowed items-center justify-center rounded-full bg-stone-300 text-stone-500"
