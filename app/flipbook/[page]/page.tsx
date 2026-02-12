@@ -44,6 +44,8 @@ export default async function FlipbookPage({ params }: Props) {
   const articleIndex: ArticleIndexEntry[] = getArticleIndex();
   const prevSpreadLabel = prevStep !== null ? getSpreadLabel(prevStep) : null;
   const nextSpreadLabel = nextStep !== null ? getSpreadLabel(nextStep) : null;
+  const firstSpreadLabel = steps.length > 0 ? getSpreadLabel(steps[0]) : null;
+  const lastSpreadLabel = steps.length > 0 ? getSpreadLabel(steps[steps.length - 1]) : null;
 
   const viewData: PageWithCompany[] = pageNumbers
     .map((num) => {
@@ -63,6 +65,8 @@ export default async function FlipbookPage({ params }: Props) {
     spreadLabel,
     prevSpreadLabel,
     nextSpreadLabel,
+    firstSpreadLabel,
+    lastSpreadLabel,
     viewData,
     articleIndex,
     nextStep,

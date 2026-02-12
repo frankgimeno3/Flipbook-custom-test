@@ -10,6 +10,7 @@ import {
   setCachedSpread,
   type SpreadPayload,
 } from "../lib/spread-cache";
+import FlipbookNav from "./FlipbookNav";
 
 const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 2;
@@ -23,6 +24,14 @@ function easeInOutCubic(t: number): number {
 
 /** Proporción 228×297 mm (como hoja revista) */
 const PAGE_ASPECT_RATIO = 228 / 297;
+
+/** Gap entre páginas (mismo que gap-4) y estilo base de cada slot del spread */
+const GAP_PX = 16;
+const SPREAD_SLOT_STYLE: Record<string, string | number> = {
+  aspectRatio: `${PAGE_ASPECT_RATIO}`,
+  width: "min(35vw, 739px)",
+  minWidth: "min(90vw, 216px)",
+};
 
 interface PageWithCompany {
   page: FlipbookPage;
@@ -40,6 +49,8 @@ export interface FlipbookViewProps {
   spreadLabel: string;
   prevSpreadLabel: string | null;
   nextSpreadLabel: string | null;
+  firstSpreadLabel?: string | null;
+  lastSpreadLabel?: string | null;
   viewData: PageWithCompany[];
   articleIndex: ArticleIndexEntry[];
   nextStep: number | null;
@@ -163,6 +174,8 @@ function PageCard({
         minWidth: "min(90vw, 216px)",
       }}
     >
+      {/* Base blanca siempre presente: evita transparencia durante el giro 3D */}
+      <div className="absolute inset-0 rounded-lg bg-white" aria-hidden />
       {/* Fondo imagen: solo cover, advert, backCover */}
       {hasBgImage && (
         <div className="absolute inset-0">
@@ -396,25 +409,26 @@ function TurnScene({
   const shrink = 1 - (1 - END_SCALE) * easeInOutCubic(endT);
 
   const slotClass = "flex shrink-0 items-stretch justify-center";
-  const cardStyle: Record<string, string | number> = {
-    aspectRatio: `${PAGE_ASPECT_RATIO}`,
-    width: "min(35vw, 739px)",
-    minWidth: "min(90vw, 216px)",
-  };
-
-  const layoutClass = "absolute inset-0 flex flex-wrap items-stretch justify-center gap-4";
+  const cardStyle = SPREAD_SLOT_STYLE;
+  const layoutClass = "absolute inset-0 flex items-stretch justify-center";
+  const layoutStyle = { gap: GAP_PX };
   const sheetSlotStyle = {
     ...cardStyle,
     ...(turningCardSize ? { width: turningCardSize.w, height: turningCardSize.h } : {}),
   };
+  const placeholderSlotStyle = { ...cardStyle, visibility: "hidden" as const, pointerEvents: "none" as const };
   const sheetTransformOrigin = turnDir === "next" ? "0% 50%" : "100% 50%";
   const sheetTransform =
     `translateX(${tx}px) translateZ(60px) rotateY(${angle}deg) rotateZ(${zTweak}deg) scale(${shrink})`;
 
   const showFrom = firstHalf;
   const fromPage = turnDir === "next" ? fromLR.right : fromLR.left;
-  const toPage = turnDir === "next" ? toLR.left : toLR.right;
+  const toFacingPage = turnDir === "next" ? toLR.left : toLR.right;
   const flipContent = !firstHalf;
+
+  const underlayRevealThreshold = 0.98;
+  const showUnderlayLeft = fromLR.left != null || turnProgress >= underlayRevealThreshold;
+  const showUnderlayRight = fromLR.right != null || turnProgress >= underlayRevealThreshold;
 
   return (
     <div
@@ -428,18 +442,22 @@ function TurnScene({
         willChange: "transform",
       }}
     >
-      {/* Underlay: spread destino — z0, sin transform 3D */}
-      <div className={layoutClass} style={{ position: "absolute", inset: 0, zIndex: 0 }}>
-        {toLR.left && (
-          <div className={slotClass} style={cardStyle}>
+      {/* Underlay: spread destino — z0; ocultar slot que estaba vacío en FROM hasta el final (cover/end) */}
+      <div className={layoutClass} style={{ position: "absolute", inset: 0, zIndex: 0, ...layoutStyle }}>
+        <div className={slotClass} style={showUnderlayLeft && toLR.left ? cardStyle : placeholderSlotStyle} aria-hidden={!(showUnderlayLeft && toLR.left)}>
+          {showUnderlayLeft && toLR.left ? (
             <PageCard data={toLR.left} articleIndex={articleIndex} disableBackdropDuringTurn />
-          </div>
-        )}
-        {toLR.right && (
-          <div className={slotClass} style={cardStyle}>
+          ) : (
+            <div className="w-full h-full" style={{ visibility: "hidden", pointerEvents: "none" }} aria-hidden />
+          )}
+        </div>
+        <div className={slotClass} style={showUnderlayRight && toLR.right ? cardStyle : placeholderSlotStyle} aria-hidden={!(showUnderlayRight && toLR.right)}>
+          {showUnderlayRight && toLR.right ? (
             <PageCard data={toLR.right} articleIndex={articleIndex} disableBackdropDuringTurn />
-          </div>
-        )}
+          ) : (
+            <div className="w-full h-full" style={{ visibility: "hidden", pointerEvents: "none" }} aria-hidden />
+          )}
+        </div>
       </div>
 
       {/* Sombra proyectada sobre underlay (solo overlay, opacity en gradient) */}
@@ -453,37 +471,28 @@ function TurnScene({
         }}
       />
 
-      {/* Lado estático (from) — z10 */}
+      {/* Lado estático (from): solo el lado que NO gira; el que gira va en placeholder para no dejar copia */}
       <div
         className={layoutClass}
-        style={{ position: "absolute", inset: 0, zIndex: 10, perspective: "2400px" }}
+        style={{ position: "absolute", inset: 0, zIndex: 10, perspective: "2400px", ...layoutStyle }}
       >
-        {turnDir === "next" ? (
-          <>
-            {fromLR.left ? (
-              <div className={slotClass} style={cardStyle}>
-                <PageCard data={fromLR.left} articleIndex={articleIndex} disableBackdropDuringTurn />
-              </div>
-            ) : (
-              <div className={slotClass} style={cardStyle} aria-hidden />
-            )}
-            <div className={slotClass} style={cardStyle} aria-hidden />
-          </>
-        ) : (
-          <>
-            <div className={slotClass} style={cardStyle} aria-hidden />
-            {fromLR.right ? (
-              <div className={slotClass} style={cardStyle}>
-                <PageCard data={fromLR.right} articleIndex={articleIndex} disableBackdropDuringTurn />
-              </div>
-            ) : (
-              <div className={slotClass} style={cardStyle} aria-hidden />
-            )}
-          </>
-        )}
+        <div className={slotClass} style={turnDir === "next" && fromLR.left ? cardStyle : placeholderSlotStyle} aria-hidden={!(turnDir === "next" && fromLR.left)}>
+          {turnDir === "next" && fromLR.left ? (
+            <PageCard data={fromLR.left} articleIndex={articleIndex} disableBackdropDuringTurn />
+          ) : (
+            <div className="w-full h-full" style={{ visibility: "hidden", pointerEvents: "none" }} aria-hidden />
+          )}
+        </div>
+        <div className={slotClass} style={turnDir === "prev" && fromLR.right ? cardStyle : placeholderSlotStyle} aria-hidden={!(turnDir === "prev" && fromLR.right)}>
+          {turnDir === "prev" && fromLR.right ? (
+            <PageCard data={fromLR.right} articleIndex={articleIndex} disableBackdropDuringTurn />
+          ) : (
+            <div className="w-full h-full" style={{ visibility: "hidden", pointerEvents: "none" }} aria-hidden />
+          )}
+        </div>
       </div>
 
-      {/* Hoja que gira — z50, una sola cara opaca; sin opacity/mix-blend/bg en contenedor; swap contenido en 0.5 */}
+      {/* Hoja que gira — z50, dos slots fijos; sheet en el slot que gira */}
       <div
         className={layoutClass}
         style={{
@@ -495,12 +504,13 @@ function TurnScene({
           zIndex: 50,
           pointerEvents: "none",
           perspective: "2400px",
+          ...layoutStyle,
         }}
       >
         {turnDir === "next" ? (
           <>
-            <div className={slotClass} style={cardStyle} aria-hidden />
-            {fromLR.right && (
+            <div className={slotClass} style={placeholderSlotStyle} aria-hidden />
+            {(fromLR.right ?? toLR.left) && (
               <div
                 className={slotClass}
                 style={{
@@ -523,10 +533,10 @@ function TurnScene({
                     >
                       {showFrom && fromPage ? (
                         <PageCard data={fromPage} articleIndex={articleIndex} disableBackdropDuringTurn />
-                      ) : toPage ? (
-                        <PageCard data={toPage} articleIndex={articleIndex} disableBackdropDuringTurn />
+                      ) : toFacingPage ? (
+                        <PageCard data={toFacingPage} articleIndex={articleIndex} disableBackdropDuringTurn />
                       ) : (
-                        <div className="h-full w-full rounded-lg bg-stone-200" />
+                        <div className="h-full w-full rounded-lg bg-white" aria-hidden />
                       )}
                     </div>
                   </div>
@@ -543,7 +553,7 @@ function TurnScene({
           </>
         ) : (
           <>
-            {fromLR.left && (
+            {(fromLR.left ?? toLR.right) && (
               <div
                 className={slotClass}
                 style={{
@@ -566,10 +576,10 @@ function TurnScene({
                     >
                       {showFrom && fromPage ? (
                         <PageCard data={fromPage} articleIndex={articleIndex} disableBackdropDuringTurn />
-                      ) : toPage ? (
-                        <PageCard data={toPage} articleIndex={articleIndex} disableBackdropDuringTurn />
+                      ) : toFacingPage ? (
+                        <PageCard data={toFacingPage} articleIndex={articleIndex} disableBackdropDuringTurn />
                       ) : (
-                        <div className="h-full w-full rounded-lg bg-stone-200" />
+                        <div className="h-full w-full rounded-lg bg-white" aria-hidden />
                       )}
                     </div>
                   </div>
@@ -583,7 +593,7 @@ function TurnScene({
                 </div>
               </div>
             )}
-            <div className={slotClass} style={cardStyle} aria-hidden />
+            <div className={slotClass} style={placeholderSlotStyle} aria-hidden />
           </>
         )}
       </div>
@@ -598,6 +608,8 @@ export default function FlipbookView({
   spreadLabel,
   prevSpreadLabel,
   nextSpreadLabel,
+  firstSpreadLabel,
+  lastSpreadLabel,
   viewData,
   articleIndex,
   nextStep,
@@ -622,7 +634,8 @@ export default function FlipbookView({
   const router = useRouter();
   const viewportRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
-  const pageRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const leftSlotRef = useRef<HTMLDivElement>(null);
+  const rightSlotRef = useRef<HTMLDivElement>(null);
   const dragStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
   const zoomRef = useRef(zoom);
   const zoomAnimationRef = useRef<number | null>(null);
@@ -742,17 +755,17 @@ export default function FlipbookView({
         return;
       }
       if (zoom <= 1) {
+        const { left: leftPage, right: rightPage } = splitSpread(viewData);
         let inPointer = false;
-        for (let i = 0; i < viewData.length; i++) {
-          const el = pageRefs.current[i];
-          if (!el) continue;
-          const rect = el.getBoundingClientRect();
-          const side = effectiveSide(viewData[i].page);
-          const { pointer } = hitTestZones(rect, e.clientX, e.clientY, side);
-          if (pointer) {
-            inPointer = true;
-            break;
-          }
+        if (leftPage && leftSlotRef.current) {
+          const rect = leftSlotRef.current.getBoundingClientRect();
+          const { pointer } = hitTestZones(rect, e.clientX, e.clientY, "left");
+          if (pointer) inPointer = true;
+        }
+        if (!inPointer && rightPage && rightSlotRef.current) {
+          const rect = rightSlotRef.current.getBoundingClientRect();
+          const { pointer } = hitTestZones(rect, e.clientX, e.clientY, "right");
+          if (pointer) inPointer = true;
         }
         setPointerCursor(inPointer);
       } else {
@@ -802,22 +815,21 @@ export default function FlipbookView({
       }
 
       const content = contentRef.current;
-      const turningCardIndex = direction === "next" ? 1 : 0;
-      const turningEl = pageRefs.current[turningCardIndex];
+      const turningSlot = direction === "next" ? rightSlotRef.current : leftSlotRef.current;
       if (content) {
         setStageSize({
           w: content.offsetWidth,
           h: content.offsetHeight,
         });
       }
-      if (turningEl) {
-        const rect = turningEl.getBoundingClientRect();
+      if (turningSlot) {
+        const rect = turningSlot.getBoundingClientRect();
         setTurningCardSize({ w: rect.width, h: rect.height });
       } else {
         setTurningCardSize(null);
       }
-      const elL = pageRefs.current[0];
-      const elR = pageRefs.current[1];
+      const elL = leftSlotRef.current;
+      const elR = rightSlotRef.current;
       let gapPx = 0;
       if (elL && elR) {
         const rectL = elL.getBoundingClientRect();
@@ -915,8 +927,10 @@ export default function FlipbookView({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [animateZoom, prevSpreadLabel, nextSpreadLabel, requestNavigate]);
 
+  const spreadLR = splitSpread(viewData);
+
   return (
-    <div className="flipbook-layout flex min-h-screen flex-col">
+    <div className="flipbook-layout flex min-h-screen flex-col pb-20">
       <div
         ref={viewportRef}
         className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden px-4 py-8"
@@ -939,13 +953,25 @@ export default function FlipbookView({
           style={{
             transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
             transformOrigin: "0 0",
-            ...(isTurning ? { isolation: "isolate" } : {}),
+            ...(isTurning && stageSize
+              ? {
+                  isolation: "isolate",
+                  width: stageSize.w,
+                  height: stageSize.h,
+                  flexShrink: 0,
+                }
+              : {}),
           }}
         >
           {isTurning && fromSpread && toSpread && turnDir && stageSize && (
             <div
               className="absolute left-0 top-0 flex items-center justify-center"
-              style={{ width: stageSize.w, height: stageSize.h }}
+              style={{
+                width: stageSize.w,
+                height: stageSize.h,
+                position: "relative",
+                isolation: "isolate",
+              }}
             >
               <TurnScene
                 fromSpread={fromSpread}
@@ -961,26 +987,28 @@ export default function FlipbookView({
           )}
           <div
             ref={contentRef}
-            className="flex flex-wrap items-stretch justify-center gap-4"
-            style={
-              isTurning && fromSpread && toSpread && turnDir
-                ? { visibility: "hidden", pointerEvents: "none" }
-                : undefined
-            }
+            className="flex items-stretch justify-center"
+            style={{
+              gap: GAP_PX,
+              ...(isTurning && fromSpread && toSpread && turnDir && stageSize
+                ? {
+                    visibility: "hidden",
+                    pointerEvents: "none",
+                    width: stageSize.w,
+                    height: stageSize.h,
+                  }
+                : undefined),
+            }}
           >
-            {viewData.map((data, i) => {
-              const side = effectiveSide(data.page);
-              return (
-                <div
-                  key={data.page.page_id}
-                  ref={(el) => {
-                    pageRefs.current[i] = el;
-                  }}
-                  className="relative"
-                >
-                  <PageCard data={data} articleIndex={articleIndex} />
-                  {/* Un solo overlay por lado: edge 10% + buffer 100px → una sola navegación por click */}
-                  {side === "left" && prevSpreadLabel && (
+            <div
+              ref={leftSlotRef}
+              className="relative flex shrink-0 items-stretch justify-center"
+              style={SPREAD_SLOT_STYLE}
+            >
+              {spreadLR.left ? (
+                <>
+                  <PageCard data={spreadLR.left} articleIndex={articleIndex} />
+                  {prevSpreadLabel && (
                     <div
                       className="absolute top-0 h-full cursor-pointer"
                       style={{
@@ -997,7 +1025,24 @@ export default function FlipbookView({
                       aria-label="Página anterior"
                     />
                   )}
-                  {side === "right" && nextSpreadLabel && (
+                </>
+              ) : (
+                <div
+                  className="w-full h-full"
+                  style={{ visibility: "hidden", pointerEvents: "none" }}
+                  aria-hidden
+                />
+              )}
+            </div>
+            <div
+              ref={rightSlotRef}
+              className="relative flex shrink-0 items-stretch justify-center"
+              style={SPREAD_SLOT_STYLE}
+            >
+              {spreadLR.right ? (
+                <>
+                  <PageCard data={spreadLR.right} articleIndex={articleIndex} />
+                  {nextSpreadLabel && (
                     <div
                       className="absolute top-0 h-full cursor-pointer"
                       style={{
@@ -1014,131 +1059,35 @@ export default function FlipbookView({
                       aria-label="Página siguiente"
                     />
                   )}
-                </div>
-              );
-            })}
+                </>
+              ) : (
+                <div
+                  className="w-full h-full"
+                  style={{ visibility: "hidden", pointerEvents: "none" }}
+                  aria-hidden
+                />
+              )}
+            </div>
           </div>
         </div>
       </div>
 
-      <nav
-        className="flex flex-wrap items-center justify-center gap-4 border-t border-stone-300 bg-stone-100/80 px-6 py-4 backdrop-blur-sm sm:gap-6"
-        aria-label="Navegación del flipbook"
-      >
-        {prevSpreadLabel ? (
-          <button
-            type="button"
-            onClick={() => requestNavigate("prev")}
-            disabled={isTurning}
-            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-amber-600 text-white shadow transition hover:bg-amber-700 disabled:opacity-60"
-            aria-label="Página anterior"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="24"
-              height="24"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M15 18l-6-6 6-6" />
-            </svg>
-          </button>
-        ) : (
-          <span
-            className="flex h-12 w-12 shrink-0 cursor-not-allowed items-center justify-center rounded-full bg-stone-300 text-stone-500"
-            aria-hidden
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="24"
-              height="24"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-            >
-              <path d="M15 18l-6-6 6-6" />
-            </svg>
-          </span>
-        )}
-
-        <span className="min-w-[100px] shrink-0 text-center text-sm font-medium text-stone-600">
-          {spreadLabel} / {totalSteps}
-        </span>
-
-        {nextSpreadLabel ? (
-          <button
-            type="button"
-            onClick={() => requestNavigate("next")}
-            disabled={isTurning}
-            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-amber-600 text-white shadow transition hover:bg-amber-700 disabled:opacity-60"
-            aria-label="Página siguiente"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="24"
-              height="24"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M9 18l6-6-6-6" />
-            </svg>
-          </button>
-        ) : (
-          <span
-            className="flex h-12 w-12 shrink-0 cursor-not-allowed items-center justify-center rounded-full bg-stone-300 text-stone-500"
-            aria-hidden
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="24"
-              height="24"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-            >
-              <path d="M9 18l6-6-6-6" />
-            </svg>
-          </span>
-        )}
-
-        <div className="flex shrink-0 items-center gap-2 rounded-full border border-stone-300 bg-white/80 px-3 py-1.5">
-          <button
-            type="button"
-            onClick={zoomOut}
-            disabled={zoom <= ZOOM_MIN}
-            className="flex h-8 w-8 items-center justify-center rounded-full text-stone-600 transition hover:bg-stone-200 disabled:opacity-40 disabled:hover:bg-transparent"
-            aria-label="Reducir zoom"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M5 12h14" />
-            </svg>
-          </button>
-          <span className="min-w-[3rem] text-center text-sm font-medium text-stone-700">
-            {Math.round(zoom * 100)}%
-          </span>
-          <button
-            type="button"
-            onClick={zoomIn}
-            disabled={zoom >= ZOOM_MAX}
-            className="flex h-8 w-8 items-center justify-center rounded-full text-stone-600 transition hover:bg-stone-200 disabled:opacity-40 disabled:hover:bg-transparent"
-            aria-label="Aumentar zoom"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M12 5v14M5 12h14" />
-            </svg>
-          </button>
-        </div>
-      </nav>
+      <FlipbookNav
+        spreadLabel={spreadLabel}
+        totalSteps={totalSteps}
+        prevSpreadLabel={prevSpreadLabel}
+        nextSpreadLabel={nextSpreadLabel}
+        firstSpreadLabel={firstSpreadLabel}
+        lastSpreadLabel={lastSpreadLabel}
+        isTurning={isTurning}
+        requestNavigate={requestNavigate}
+        router={router}
+        zoom={zoom}
+        zoomIn={zoomIn}
+        zoomOut={zoomOut}
+        zoomMin={ZOOM_MIN}
+        zoomMax={ZOOM_MAX}
+      />
     </div>
   );
 }
